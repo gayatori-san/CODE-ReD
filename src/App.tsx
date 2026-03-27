@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Map as MapIcon, 
@@ -10,12 +10,36 @@ import {
   Clock,
   Users,
   Bus,
-  ShieldAlert
+  ShieldAlert,
+  LogIn,
+  LogOut
 } from 'lucide-react';
+import { 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  query, 
+  orderBy, 
+  Timestamp,
+  doc,
+  getDocFromServer
+} from 'firebase/firestore';
+import { db, auth } from './firebase';
+import { useAuth } from './components/FirebaseProvider';
 
 type ViewType = 'live' | 'planner' | 'ratings' | 'about';
 
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
 export default function App() {
+  const { user, login, logout, loading: authLoading } = useAuth();
   const [activeView, setActiveView] = useState<ViewType>('live');
   const [eta, setEta] = useState(7);
   const [tickets, setTickets] = useState(18);
@@ -23,6 +47,10 @@ export default function App() {
   const [isSOSOpen, setIsSOSOpen] = useState(false);
   const [sosSent, setSosSent] = useState(false);
   const [selectedSOS, setSelectedSOS] = useState<string | null>(null);
+  
+  // Firestore data
+  const [buses, setBuses] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<any[]>([]);
   
   // Planner state
   const [routeResult, setRouteResult] = useState<any>(null);
@@ -32,7 +60,64 @@ export default function App() {
   const [ratingSuccess, setRatingSuccess] = useState(false);
   const [reportSuccess, setReportSuccess] = useState(false);
 
-  // Live updates
+  // Error handling
+  const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
+    const errInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      authInfo: {
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+        emailVerified: auth.currentUser?.emailVerified,
+      },
+      operationType,
+      path
+    };
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  };
+
+  // Test Connection
+  useEffect(() => {
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration. ");
+        }
+      }
+    }
+    testConnection();
+  }, []);
+
+  // Real-time Firestore Listeners
+  useEffect(() => {
+    const busesPath = 'buses';
+    const unsubscribeBuses = onSnapshot(collection(db, busesPath), (snapshot) => {
+      const busList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setBuses(busList);
+      
+      // Update stats based on real data
+      if (busList.length > 0) {
+        const g = busList.filter((b: any) => b.status === 'GREEN').length;
+        const y = busList.filter((b: any) => b.status === 'YELLOW').length;
+        const r = busList.filter((b: any) => b.status === 'RED').length;
+        setStats({ active: busList.length, green: g, yellow: y, red: r });
+      }
+    }, (error) => handleFirestoreError(error, OperationType.LIST, busesPath));
+
+    const alertsPath = 'alerts';
+    const alertsQuery = query(collection(db, alertsPath), orderBy('timestamp', 'desc'));
+    const unsubscribeAlerts = onSnapshot(alertsQuery, (snapshot) => {
+      setAlerts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, alertsPath));
+
+    return () => {
+      unsubscribeBuses();
+      unsubscribeAlerts();
+    };
+  }, []);
+
+  // Local simulations for UI feel
   useEffect(() => {
     const etaInterval = setInterval(() => {
       setEta(prev => {
@@ -48,18 +133,9 @@ export default function App() {
       });
     }, 4000);
 
-    const statsInterval = setInterval(() => {
-      const a = 22 + Math.floor(Math.random() * 4);
-      const g = Math.floor(a * 0.65);
-      const y = Math.floor(a * 0.25);
-      const r = a - g - y;
-      setStats({ active: a, green: g, yellow: y, red: r });
-    }, 8000);
-
     return () => {
       clearInterval(etaInterval);
       clearInterval(ticketInterval);
-      clearInterval(statsInterval);
     };
   }, []);
 
@@ -90,13 +166,44 @@ export default function App() {
     setTimeout(() => setRatingSuccess(false), 3000);
   };
 
-  const submitReport = () => {
-    setReportSuccess(true);
-    setTimeout(() => setReportSuccess(false), 4000);
+  const submitReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return login();
+    
+    const busId = (document.getElementById('rep-bus') as HTMLInputElement).value;
+    const type = (document.getElementById('rep-type') as HTMLSelectElement).value;
+    const description = (document.querySelector('textarea') as HTMLTextAreaElement).value;
+    
+    const path = 'reports';
+    try {
+      await addDoc(collection(db, path), {
+        busId,
+        type,
+        description,
+        timestamp: Timestamp.now(),
+        uid: user.uid
+      });
+      setReportSuccess(true);
+      setTimeout(() => setReportSuccess(false), 4000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, path);
+    }
   };
 
-  const sendSOS = () => {
-    setSosSent(true);
+  const sendSOS = async () => {
+    if (!user) return login();
+    const path = 'sos';
+    try {
+      await addDoc(collection(db, path), {
+        type: selectedSOS || 'General Emergency',
+        timestamp: Timestamp.now(),
+        uid: user.uid,
+        location: { lat: 0, lng: 0 } // Mock location
+      });
+      setSosSent(true);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, path);
+    }
   };
 
   const closeSOS = () => {
@@ -106,6 +213,14 @@ export default function App() {
       setSelectedSOS(null);
     }, 300);
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[var(--accent)]"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -128,15 +243,26 @@ export default function App() {
             </button>
           ))}
         </div>
-        <button 
-          onClick={() => setIsSOSOpen(true)}
-          className="px-4 py-2 bg-[var(--red)] text-white rounded-lg font-bold text-sm animate-pulse-red"
-        >
-          🆘 SOS
-        </button>
+        <div className="flex items-center gap-3">
+          {user ? (
+            <button onClick={logout} className="p-2 text-[var(--muted)] hover:text-[var(--text)] transition-colors">
+              <LogOut size={20} />
+            </button>
+          ) : (
+            <button onClick={login} className="p-2 text-[var(--muted)] hover:text-[var(--accent)] transition-colors">
+              <LogIn size={20} />
+            </button>
+          )}
+          <button 
+            onClick={() => setIsSOSOpen(true)}
+            className="px-4 py-2 bg-[var(--red)] text-white rounded-lg font-bold text-sm animate-pulse-red"
+          >
+            🆘 SOS
+          </button>
+        </div>
       </nav>
 
-      {/* MOBILE NAV (Visible on small screens) */}
+      {/* MOBILE NAV */}
       <div className="md:hidden flex justify-around p-2 border-b border-[var(--border)] bg-[var(--surface)]">
         {(['live', 'planner', 'ratings', 'about'] as ViewType[]).map(view => (
           <button
@@ -155,8 +281,8 @@ export default function App() {
       {/* TICKER */}
       <div className="bg-[var(--surface)] border-y border-[var(--border)] py-2 overflow-hidden relative">
         <div className="flex gap-12 whitespace-nowrap animate-ticker">
-          <TickerItems />
-          <TickerItems />
+          <TickerItems alerts={alerts} />
+          <TickerItems alerts={alerts} />
         </div>
       </div>
 
@@ -182,10 +308,7 @@ export default function App() {
                   <SectionHeader title="Live Map" subtitle="GPS refresh every 5s · Route: Pimpri → Swargate" />
                   <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden relative h-[480px]">
                     <div className="absolute inset-0 bg-[#0d1117]">
-                      {/* Grid lines */}
                       <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'linear-gradient(var(--blue) 1px, transparent 1px), linear-gradient(90deg, var(--blue) 1px, transparent 1px)', backgroundSize: '48px 48px' }}></div>
-                      
-                      {/* Roads */}
                       <div className="absolute inset-0">
                         <div className="absolute h-2.5 w-full bg-[var(--surface2)] top-[20%]"></div>
                         <div className="absolute h-2.5 w-full bg-[#1c2436] top-[38%]"></div>
@@ -196,25 +319,17 @@ export default function App() {
                         <div className="absolute w-2.5 h-full bg-[var(--surface2)] left-[68%]"></div>
                         <div className="absolute w-2.5 h-full bg-[var(--surface2)] left-[85%]"></div>
                       </div>
-
-                      {/* Route SVG */}
                       <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
                         <polyline points="15,38 38,38 45,30 62,30 62,38 80,38" fill="none" stroke="var(--blue)" strokeWidth="0.8" strokeDasharray="2,1.5" opacity="0.7"/>
                       </svg>
-
-                      {/* Stops */}
                       <StopDot top="36%" left="15%" label="Pimpri" />
                       <StopDot top="36%" left="38%" label="Akurdi" />
                       <StopDot top="28%" left="45%" label="Nigdi" />
                       <StopDot top="28%" left="62%" label="FC Road" />
                       <StopDot top="36%" left="80%" label="Swargate" />
-
-                      {/* Bus */}
                       <div className="absolute w-5 h-5 bg-[var(--accent)] rounded-full border-2 border-white shadow-[0_0_0_6px_rgba(0,229,255,0.2)] z-20 animate-bus-move flex items-center justify-center">
                         <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-[var(--accent)] text-black font-mono text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap">BUS-42</div>
                       </div>
-
-                      {/* Map Overlay */}
                       <div className="absolute bottom-4 left-4 right-4 flex gap-3 z-30">
                         <EtaChip label="ETA to your stop" value={eta} unit="min" />
                         <EtaChip label="Distance" value="3.2" unit="km" color="var(--green)" />
@@ -252,10 +367,16 @@ export default function App() {
                   <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6">
                     <h3 className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted)] font-mono mb-4">Nearby Buses</h3>
                     <div className="space-y-2">
-                      <BusItem num="42" route="Pimpri → Swargate" eta="7 min" color="var(--green)" />
-                      <BusItem num="17" route="Pimpri → Shivajinagar" eta="4 min" color="var(--green)" />
-                      <BusItem num="88" route="Wakad → Hinjewadi" eta="11 min" color="var(--yellow)" />
-                      <BusItem num="05" route="Chinchwad → Katraj" eta="18 min" color="var(--red)" />
+                      {buses.length > 0 ? buses.map(bus => (
+                        <BusItem key={bus.id} num={String(bus.id)} route={String(bus.route)} eta={`${bus.eta} min`} color={bus.status === 'GREEN' ? 'var(--green)' : bus.status === 'YELLOW' ? 'var(--yellow)' : 'var(--red)'} />
+                      )) : (
+                        <>
+                          <BusItem num="42" route="Pimpri → Swargate" eta="7 min" color="var(--green)" />
+                          <BusItem num="17" route="Pimpri → Shivajinagar" eta="4 min" color="var(--green)" />
+                          <BusItem num="88" route="Wakad → Hinjewadi" eta="11 min" color="var(--yellow)" />
+                          <BusItem num="05" route="Chinchwad → Katraj" eta="18 min" color="var(--red)" />
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -383,12 +504,12 @@ export default function App() {
                 <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6">
                   <h3 className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted)] font-mono mb-4">Discreet Harassment Report</h3>
                   <p className="text-xs text-[var(--muted)] mb-6 leading-relaxed">Your report is automatically tagged with Bus ID, Route, and Timestamp. This is secure and confidential.</p>
-                  <div className="space-y-4">
+                  <form onSubmit={submitReport} className="space-y-4">
                     <InputGroup label="Bus Number">
-                      <input type="text" placeholder="e.g. 42" className="w-full bg-[var(--surface2)] border border-[var(--border)] rounded-lg p-3 text-sm outline-none focus:border-[var(--accent)] transition-all" />
+                      <input id="rep-bus" type="text" placeholder="e.g. 42" className="w-full bg-[var(--surface2)] border border-[var(--border)] rounded-lg p-3 text-sm outline-none focus:border-[var(--accent)] transition-all" required />
                     </InputGroup>
                     <InputGroup label="Incident Type">
-                      <select className="w-full bg-[var(--surface2)] border border-[var(--border)] rounded-lg p-3 text-sm outline-none focus:border-[var(--accent)] transition-all">
+                      <select id="rep-type" className="w-full bg-[var(--surface2)] border border-[var(--border)] rounded-lg p-3 text-sm outline-none focus:border-[var(--accent)] transition-all" required>
                         <option>Verbal harassment</option>
                         <option>Physical harassment</option>
                         <option>Theft / pickpocket</option>
@@ -399,9 +520,9 @@ export default function App() {
                     <InputGroup label="Brief Description (optional)">
                       <textarea rows={3} placeholder="Describe the incident..." className="w-full bg-[var(--surface2)] border border-[var(--border)] rounded-lg p-3 text-sm outline-none focus:border-[var(--accent)] transition-all resize-none"></textarea>
                     </InputGroup>
-                    <button onClick={submitReport} className="w-full py-3 bg-[var(--accent)] text-black font-bold rounded-lg">Send Report Securely</button>
+                    <button type="submit" className="w-full py-3 bg-[var(--accent)] text-black font-bold rounded-lg">Send Report Securely</button>
                     {reportSuccess && <div className="p-3 bg-[var(--green)]/10 border border-[var(--green)] rounded-lg text-[var(--green)] text-sm font-bold flex items-center gap-2"><ShieldAlert size={16} /> Report sent to authorities. Stay safe.</div>}
-                  </div>
+                  </form>
                 </div>
               </div>
             </motion.div>
@@ -519,14 +640,22 @@ export default function App() {
   );
 }
 
-function TickerItems() {
+function TickerItems({ alerts }: { alerts: any[] }) {
   return (
     <>
-      <span className="text-[10px] font-mono text-[var(--muted)]">BUS-42 (Nigdi → Swargate): <span className="text-[var(--accent)]">Crowd — GREEN ✓</span></span>
-      <span className="text-[10px] font-mono text-[var(--muted)]">BUS-17 (Pimpri → Shivajinagar): <span className="text-[var(--accent)]">ETA 4 min</span></span>
-      <span className="text-[10px] font-mono text-[var(--muted)]">BUS-88 (Wakad → Hinjewadi): <span className="text-[var(--accent)]">Crowd — YELLOW ⚠</span></span>
-      <span className="text-[10px] font-mono text-[var(--muted)]">BUS-05 (Chinchwad → Katraj): <span className="text-[var(--accent)]">Slight delay – traffic on FC Road</span></span>
-      <span className="text-[10px] font-mono text-[var(--muted)] text-[var(--red)] font-bold">ALERT: BUS-33 breakdown reported — alternate via BUS-61</span>
+      {alerts.length > 0 ? alerts.map(alert => (
+        <span key={alert.id} className={`text-[10px] font-mono ${alert.type === 'CRITICAL' ? 'text-[var(--red)] font-bold' : 'text-[var(--muted)]'}`}>
+          {alert.message}
+        </span>
+      )) : (
+        <>
+          <span className="text-[10px] font-mono text-[var(--muted)]">BUS-42 (Nigdi → Swargate): <span className="text-[var(--accent)]">Crowd — GREEN ✓</span></span>
+          <span className="text-[10px] font-mono text-[var(--muted)]">BUS-17 (Pimpri → Shivajinagar): <span className="text-[var(--accent)]">ETA 4 min</span></span>
+          <span className="text-[10px] font-mono text-[var(--muted)]">BUS-88 (Wakad → Hinjewadi): <span className="text-[var(--accent)]">Crowd — YELLOW ⚠</span></span>
+          <span className="text-[10px] font-mono text-[var(--muted)]">BUS-05 (Chinchwad → Katraj): <span className="text-[var(--accent)]">Slight delay – traffic on FC Road</span></span>
+          <span className="text-[10px] font-mono text-[var(--muted)] text-[var(--red)] font-bold">ALERT: BUS-33 breakdown reported — alternate via BUS-61</span>
+        </>
+      )}
     </>
   );
 }
@@ -587,7 +716,7 @@ function CrowdZone({ color, active, name, desc, count }: { color: string, active
   );
 }
 
-function BusItem({ num, route, eta, color }: { num: string, route: string, eta: string, color: string }) {
+function BusItem({ num, route, eta, color }: { num: string, route: string, eta: string, color: string, key?: any }) {
   return (
     <div className="flex items-center gap-3 p-3 bg-[var(--surface2)] rounded-xl hover:bg-[var(--border)] transition-all cursor-pointer">
       <div className="bg-[var(--blue)] text-white font-mono font-bold text-xs px-2 py-1 rounded min-w-[40px] text-center">{num}</div>

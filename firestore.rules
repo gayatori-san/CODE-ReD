@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: buses
+    // Fields: id, route, status, eta, tickets, lastUpdated
+    //
+    // Collection: alerts
+    // Fields: message, type, timestamp
+    //
+    // Collection: reports
+    // Fields: busId, type, description, timestamp, uid
+    //
+    // Collection: sos
+    // Fields: type, location, timestamp, uid
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "g8805664808@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidBus(data) {
+      return data.id is string && data.id.size() > 0 &&
+             data.route is string && data.route.size() > 0 &&
+             data.status in ['GREEN', 'YELLOW', 'RED'] &&
+             data.eta is number && data.eta >= 0 &&
+             data.tickets is number && data.tickets >= 0;
+    }
+
+    function isValidAlert(data) {
+      return data.message is string && data.message.size() > 0 &&
+             data.type in ['INFO', 'WARNING', 'CRITICAL'];
+    }
+
+    function isValidReport(data) {
+      return data.busId is string && data.busId.size() > 0 &&
+             data.type is string && data.type.size() > 0 &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidSOS(data) {
+      return data.type is string && data.type.size() > 0 &&
+             data.uid == request.auth.uid;
+    }
+
+    // Rules
+    match /buses/{busId} {
+      allow read: if true; // Publicly readable for commuters
+      allow write: if isAdmin(); // Only admins can update bus status
+    }
+
+    match /alerts/{alertId} {
+      allow read: if true; // Publicly readable for commuters
+      allow write: if isAdmin(); // Only admins can issue alerts
+    }
+
+    match /reports/{reportId} {
+      allow read: if isAdmin() || isDocOwner();
+      allow create: if isAuthenticated() && isValidReport(request.resource.data);
+      allow update, delete: if isAdmin();
+    }
+
+    match /sos/{sosId} {
+      allow read: if isAdmin() || isDocOwner();
+      allow create: if isAuthenticated() && isValidSOS(request.resource.data);
+      allow update, delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAdmin();
+    }
+  }
+}

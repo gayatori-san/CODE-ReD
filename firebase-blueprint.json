@@ -1,0 +1,60 @@
+{
+  "entities": {
+    "Bus": {
+      "title": "Bus",
+      "description": "Represents a transit bus with its current status and ETA.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the bus." },
+        "route": { "type": "string", "description": "The route name (e.g., Nigdi → Swargate)." },
+        "status": { "type": "string", "enum": ["GREEN", "YELLOW", "RED"], "description": "Current crowd status." },
+        "eta": { "type": "number", "description": "Estimated time of arrival in minutes." },
+        "tickets": { "type": "number", "description": "Current number of tickets sold." },
+        "lastUpdated": { "type": "string", "format": "date-time", "description": "Timestamp of the last update." }
+      },
+      "required": ["id", "route", "status", "eta", "tickets"]
+    },
+    "Alert": {
+      "title": "Alert",
+      "description": "A real-time transit alert or notification.",
+      "type": "object",
+      "properties": {
+        "message": { "type": "string", "description": "The alert message text." },
+        "type": { "type": "string", "enum": ["INFO", "WARNING", "CRITICAL"], "description": "Severity of the alert." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the alert was issued." }
+      },
+      "required": ["message", "type", "timestamp"]
+    },
+    "Report": {
+      "title": "Incident Report",
+      "description": "A report of an incident or harassment submitted by a user.",
+      "type": "object",
+      "properties": {
+        "busId": { "type": "string", "description": "ID of the bus where the incident occurred." },
+        "type": { "type": "string", "description": "Type of incident (e.g., Verbal harassment)." },
+        "description": { "type": "string", "description": "Optional details about the incident." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the report was submitted." },
+        "uid": { "type": "string", "description": "UID of the user who submitted the report." }
+      },
+      "required": ["busId", "type", "timestamp", "uid"]
+    },
+    "SOS": {
+      "title": "SOS Emergency",
+      "description": "An emergency SOS alert sent by a user.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "description": "Type of emergency (e.g., Medical Emergency)." },
+        "location": { "type": "object", "description": "GPS coordinates of the user." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the SOS was sent." },
+        "uid": { "type": "string", "description": "UID of the user who sent the SOS." }
+      },
+      "required": ["type", "timestamp", "uid"]
+    }
+  },
+  "firestore": {
+    "/buses": { "schema": "Bus", "description": "Collection of all active buses." },
+    "/alerts": { "schema": "Alert", "description": "Collection of real-time transit alerts." },
+    "/reports": { "schema": "Report", "description": "Collection of incident reports (private)." },
+    "/sos": { "schema": "SOS", "description": "Collection of emergency SOS alerts (private)." }
+  }
+}
