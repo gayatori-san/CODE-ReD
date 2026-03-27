@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Syne', sans-serif;
+  --font-mono: 'Space Mono', monospace;
+}
+
+:root {
+  --bg: #0a0c10;
+  --surface: #111318;
+  --surface2: #1a1e28;
+  --border: #222736;
+  --green: #00e676;
+  --yellow: #ffd600;
+  --red: #ff1744;
+  --blue: #2979ff;
+  --text: #e8eaf6;
+  --muted: #6b7280;
+  --accent: #00e5ff;
+}
+
+body {
+  font-family: 'Syne', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  @apply antialiased;
+}
+
+@keyframes pulse-red {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 23, 68, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(255, 23, 68, 0); }
+}
+
+@keyframes bus-move {
+  0%, 100% { top: 42%; left: 38%; }
+  25% { top: 38%; left: 50%; }
+  50% { top: 30%; left: 62%; }
+  75% { top: 38%; left: 55%; }
+}
+
+@keyframes ticker {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.animate-pulse-red {
+  animation: pulse-red 2s infinite;
+}
+
+.animate-bus-move {
+  animation: bus-move 8s ease-in-out infinite;
+}
+
+.animate-ticker {
+  animation: ticker 20s linear infinite;
+}
